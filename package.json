@@ -1,0 +1,23 @@
+{
+  "name": "container-control-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reusable passkey-protected Docker control panel and outbound sidecar agent",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/control-plane/main.js",
+    "agent": "node src/agent/main.js",
+    "operator": "node src/control-plane/operator.js",
+    "test": "node --test",
+    "validate:endpoint": "node scripts/validate-endpoint.mjs",
+    "check": "node --check src/control-plane/main.js && node --check src/agent/main.js && node --check src/control-plane/public/app.js && node --test",
+    "release:check": "npm run validate:endpoint && npm run check"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^13.3.3",
+    "ws": "^8.22.0"
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+.DS_Store
+data/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+deploy/agent.env
+deploy/control-plane.env
+/deploy/*.token

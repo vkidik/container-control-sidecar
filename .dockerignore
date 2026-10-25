@@ -1,0 +1,12 @@
+.git
+.gitignore
+node_modules
+data
+coverage
+work
+outputs
+*.log
+.env
+.env.*
+deploy/*.env
+!deploy/*.env.example

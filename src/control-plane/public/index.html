@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Управление контейнерами</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">CC</span>
+        <div>
+          <h1>Управление контейнерами</h1>
+          <p class="subtitle">Проекты, агенты и журнал операций</p>
+        </div>
+      </div>
+      <div id="session-actions" hidden>
+        <span id="owner-name"></span>
+        <button id="logout" class="quiet">Выйти</button>
+      </div>
+    </header>
+
+    <section id="auth" class="auth-card">
+      <div>
+        <p class="section-label">Безопасный доступ</p>
+        <h2>Вход в панель</h2>
+        <p>Подтвердите вход с помощью passkey, зарегистрированного владельцем панели.</p>
+        <button id="login">Войти с passkey</button>
+      </div>
+      <details>
+        <summary>Первичная настройка панели</summary>
+        <label>Одноразовый bootstrap-токен
+          <input id="bootstrap-token" type="password" autocomplete="off">
+        </label>
+        <label>Название passkey
+          <input id="passkey-label" value="Основной passkey" maxlength="80">
+        </label>
+        <button id="register">Зарегистрировать passkey</button>
+      </details>
+    </section>
+
+    <section id="dashboard" hidden>
+      <section class="audit-card">
+        <div class="dashboard-heading">
+          <div>
+            <p class="section-label">Подключения</p>
+            <h2>Ожидают подтверждения</h2>
+          </div>
+          <button id="refresh-enrollment-requests" class="quiet">Обновить</button>
+        </div>
+        <p>Новый агент не получает доступ, пока вы не подтвердите его после входа с passkey.</p>
+        <div id="enrollment-requests" class="servers"></div>
+      </section>
+      <section class="folder-toolbar">
+        <div>
+          <p class="section-label">Организация</p>
+          <h2>Папки проектов</h2>
+          <p>Размещайте агентов разных проектов в отдельных папках.</p>
+        </div>
+        <form id="create-folder-form" class="create-folder-form">
+          <input id="folder-name" maxlength="80" placeholder="Название папки" required>
+          <button>Создать папку</button>
+        </form>
+      </section>
+      <div class="dashboard-heading">
+        <div>
+          <p class="section-label">Инфраструктура</p>
+          <h2>Агенты и контейнеры</h2>
+        </div>
+        <button id="refresh" class="quiet">Обновить</button>
+      </div>
+      <div id="servers" class="folder-list"></div>
+      <section class="audit-card">
+        <div class="dashboard-heading"><h2>Последние события</h2><button id="refresh-audit" class="quiet">Обновить</button></div>
+        <div id="audit" class="audit"></div>
+      </section>
+    </section>
+
+    <p id="notice" role="status" aria-live="polite"></p>
+  </main>
+
+  <dialog id="confirm-dialog">
+    <form method="dialog">
+      <p class="section-label">Подтверждение</p>
+      <h2>Подтвердить действие?</h2>
+      <p id="confirm-summary"></p>
+      <p>Команда изменит состояние контейнера и будет записана в аудит.</p>
+      <div class="dialog-actions">
+        <button value="cancel" class="quiet">Отмена</button>
+        <button id="confirm-action" value="confirm">Подтвердить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="logs-dialog" class="logs-dialog">
+    <form method="dialog">
+      <div class="dashboard-heading"><h2 id="logs-title">Логи</h2><button value="close" class="quiet">Закрыть</button></div>
+      <pre id="logs-content"></pre>
+    </form>
+  </dialog>
+</body>
+</html>

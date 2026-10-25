@@ -1,0 +1,63 @@
+services:
+  panel:
+    image: "${GHCR_REGISTRY:-ghcr.io}/${GHCR_REPOSITORY:?GHCR_REPOSITORY is required}:${IMAGE_TAG:-latest}"
+    command: ["node", "src/control-plane/main.js"]
+    container_name: container-control-panel
+    restart: unless-stopped
+    init: true
+    environment:
+      DATA_DIR: /data
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: 8080
+      AGENT_GATEWAY_ENABLED: "true"
+      AGENT_LISTEN_HOST: 0.0.0.0
+      AGENT_LISTEN_PORT: 8081
+      PRIVATE_NETWORK_MODE: docker-published
+      WEBAUTHN_ORIGIN: ${WEBAUTHN_ORIGIN:?set WEBAUTHN_ORIGIN in .env}
+      BOOTSTRAP_TOKEN: ${BOOTSTRAP_TOKEN:?set BOOTSTRAP_TOKEN in .env}
+      APPROVAL_ENROLLMENT_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8787:8080"
+      - "127.0.0.1:8788:8081"
+    volumes:
+      - panel-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  agent:
+    profiles: [agent]
+    image: "${GHCR_REGISTRY:-ghcr.io}/${GHCR_REPOSITORY:?GHCR_REPOSITORY is required}:${IMAGE_TAG:-latest}"
+    command: ["node", "src/agent/main.js"]
+    restart: unless-stopped
+    init: true
+    environment:
+      AGENT_DISPLAY_NAME_FILE: /host/etc/hostname
+      AGENT_DATA_DIR: /agent-data
+      DOCKER_SOCKET: /var/run/docker.sock
+    volumes:
+      - container-control-agent-data:/agent-data
+      - /etc/hostname:/host/etc/hostname:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    group_add:
+      - ${DOCKER_GID:?set the Docker socket group id}
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  panel-data:
+  container-control-agent-data:
