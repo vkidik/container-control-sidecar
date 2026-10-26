@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { assertIdentifier } from '../shared/validation.js';
 
 function envOrFile(env, name) {
@@ -43,11 +44,11 @@ export function agentWebSocketUrl(controlPlaneUrl) {
   return url;
 }
 
-export function loadAgentConfig(env = process.env) {
+export function loadAgentConfig(env = process.env, getHostname = hostname) {
   const configuredServerId = envOrFile(env, 'AGENT_ID');
   const serverId = configuredServerId ? assertIdentifier(configuredServerId, 'AGENT_ID') : null;
   const controlPlaneUrl = parseControlPlaneUrl(envOrFile(env, 'CONTROL_PLANE_URL'));
-  const containerId = String(env.HOSTNAME || '').trim();
+  const containerId = String(getHostname() || '').trim();
   if (!containerId) throw new Error('agent must run inside a Docker container');
   const dataDir = path.resolve(env.AGENT_DATA_DIR || './data/agent');
   return {

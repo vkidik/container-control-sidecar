@@ -20,6 +20,15 @@ test('same-host loopback supports HTTP and matching insecure WebSocket', () => {
   assert.equal(agentWebSocketUrl(parseControlPlaneUrl('https://control.tailnet.ts.net')).protocol, 'wss:');
 });
 
+test('agent uses the current container hostname after Docker recreates it', () => {
+  const config = loadAgentConfig({
+    CONTROL_PLANE_URL: 'https://control.example',
+    HOSTNAME: 'deleted-container-id',
+  }, () => 'current-container-id');
+
+  assert.equal(config.containerId, 'current-container-id');
+});
+
 test('agent endpoint, identity, and token may come from image environment or mounted files', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'acp-agent-config-'));
   const agentIdFile = path.join(directory, 'agent-id');
