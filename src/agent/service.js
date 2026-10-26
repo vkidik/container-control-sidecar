@@ -1,7 +1,5 @@
 import { createPrivateKey, randomBytes, sign } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import http from 'node:http';
-import https from 'node:https';
 import WebSocket from 'ws';
 import { approvalRequestPayload, signaturePayload } from '../control-plane/agent-auth.js';
 import { assertAction, assertContainerName } from '../shared/validation.js';
@@ -13,27 +11,29 @@ async function tlsOptions(config) {
   return config.caFile ? { ca: await readFile(config.caFile) } : {};
 }
 
-async function postJson(url, body, options = {}) {
-  const payload = Buffer.from(JSON.stringify(body));
-  const transport = url.protocol === 'https:' ? https : http;
-  const { headers: extraHeaders = {}, ...requestOptions } = options;
+function waitForEnrollmentResult(socket, timeoutMs = 10_000) {
   return new Promise((resolve, reject) => {
-    const request = transport.request(url, {
-      method: 'POST',
-      ...requestOptions,
-      headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length, ...extraHeaders },
-    }, (response) => {
-      const chunks = [];
-      response.on('data', (chunk) => chunks.push(chunk));
-      response.on('end', () => {
-        let parsed = {};
-        try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {}
-        if (response.statusCode < 200 || response.statusCode >= 300) return reject(new Error(parsed.error || `HTTP ${response.statusCode}`));
-        resolve(parsed);
-      });
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback(value);
+    };
+    const timeout = setTimeout(() => finish(reject, new Error('enrollment WebSocket timed out')), timeoutMs);
+    socket.once('message', (data) => {
+      try {
+        const message = JSON.parse(data.toString('utf8'));
+        if (message.type !== 'enrollment' || !['pending', 'approved'].includes(message.status)) {
+          throw new Error('invalid enrollment WebSocket response');
+        }
+        finish(resolve, message);
+      } catch (error) {
+        finish(reject, error);
+      }
     });
-    request.on('error', reject);
-    request.end(payload);
+    socket.once('error', (error) => finish(reject, error));
+    socket.once('close', (code) => finish(reject, new Error(`enrollment WebSocket closed with code ${code} before a response`)));
   });
 }
 
@@ -49,32 +49,20 @@ export class AgentService {
 
   async enrollIfNeeded() {
     if (this.identity.enrolled) return;
-    if (!this.config.enrollmentToken) return this.#waitForApproval();
-    const url = new URL('/api/agent/enroll', this.config.controlPlaneUrl);
-    const result = await postJson(url, {
-      serverId: this.config.serverId,
-      publicKey: this.identity.publicKey,
-      enrollmentToken: this.config.enrollmentToken,
-      allowedContainers: this.config.allowedContainers,
-    }, await tlsOptions(this.config));
-    if (result.serverId !== this.config.serverId) throw new Error('control plane returned a different server id');
-    if (!sameStringArray(result.allowedContainers, this.config.allowedContainers)) throw new Error('control plane returned a different allowlist');
-    this.identity.enrolled = true;
-    this.identity.enrolledAt = new Date().toISOString();
-    await saveIdentity(this.config.identityFile, this.identity);
-    console.log(`agent ${this.config.serverId} enrolled`);
-  }
-
-  async #waitForApproval() {
-    const path = '/api/agent/approval-request';
-    const url = new URL(path, this.config.controlPlaneUrl);
+    const path = '/agent/enroll';
     let announced = false;
     let delay = 2000;
     while (!this.stopping && !this.identity.enrolled) {
       try {
         const timestamp = Date.now();
         const nonce = randomBytes(32).toString('base64url');
-        const displayName = this.config.displayName || this.config.serverId;
+        const displayName = String(this.config.displayName || this.config.serverId).trim().slice(0, 80) || this.config.serverId;
+        const enrollment = {
+          publicKey: this.identity.publicKey,
+          displayName,
+          allowedContainers: this.config.allowedContainers,
+          enrollmentToken: this.config.enrollmentToken || '',
+        };
         const signature = sign(
           null,
           Buffer.from(approvalRequestPayload({
@@ -88,28 +76,25 @@ export class AgentService {
           })),
           createPrivateKey(this.identity.privateKeyPem),
         ).toString('base64url');
-        const result = await postJson(url, {
-          serverId: this.config.serverId,
-          displayName,
-          publicKey: this.identity.publicKey,
-          allowedContainers: this.config.allowedContainers,
-        }, {
+        const socket = new WebSocket(agentWebSocketUrl(this.config.controlPlaneUrl, path), {
           ...(await tlsOptions(this.config)),
           headers: {
-            'Content-Type': 'application/json',
             'X-Agent-Id': this.config.serverId,
             'X-Agent-Timestamp': String(timestamp),
             'X-Agent-Nonce': nonce,
             'X-Agent-Signature': signature,
+            'X-Agent-Enrollment': Buffer.from(JSON.stringify(enrollment)).toString('base64url'),
           },
         });
+        const result = await waitForEnrollmentResult(socket);
+        socket.close(1000, 'enrollment response received');
         if (result.status === 'approved') {
           if (result.serverId !== this.config.serverId) throw new Error('control plane returned a different server id');
           if (!sameStringArray(result.allowedContainers, this.config.allowedContainers)) throw new Error('control plane returned a different allowlist');
           this.identity.enrolled = true;
           this.identity.enrolledAt = new Date().toISOString();
           await saveIdentity(this.config.identityFile, this.identity);
-          console.log(`agent ${this.config.serverId} approved and enrolled`);
+          console.log(`agent ${this.config.serverId} enrolled over WebSocket`);
           return;
         }
         if (!announced) {
@@ -118,7 +103,7 @@ export class AgentService {
         }
         delay = 5000;
       } catch (error) {
-        console.error(`approval request failed: ${error.message}`);
+        console.error(`enrollment WebSocket failed: ${error.message}`);
         delay = Math.min(delay * 2, this.config.reconnectMaximumMs);
       }
       if (!this.stopping) await new Promise((resolve) => setTimeout(resolve, delay));

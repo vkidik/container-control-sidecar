@@ -51,6 +51,25 @@ function publicApprovalRequest(request) {
   };
 }
 
+function agentEnrollment(request) {
+  const encoded = String(request.headers['x-agent-enrollment'] || '');
+  if (!encoded || encoded.length > 32 * 1024 || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
+    throw new Error('invalid agent enrollment payload');
+  }
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+  } catch {
+    throw new Error('invalid agent enrollment payload');
+  }
+  return {
+    publicKey: String(payload.publicKey || ''),
+    displayName: String(payload.displayName || ''),
+    allowedContainers: Array.isArray(payload.allowedContainers) ? payload.allowedContainers : [],
+    enrollmentToken: String(payload.enrollmentToken || ''),
+  };
+}
+
 export async function createControlPlane(config) {
   const store = new StateStore(config.stateFile, { username: 'owner', displayName: 'Владелец' });
   await store.init();
@@ -73,69 +92,6 @@ export async function createControlPlane(config) {
       const url = new URL(request.url, config.origin);
       if (request.method === 'GET' && url.pathname === '/healthz') {
         return sendJson(response, 200, { ok: true });
-      }
-      if (request.method === 'POST' && url.pathname === '/api/agent/enroll') {
-        const body = await readJson(request, 64 * 1024);
-        const serverId = assertIdentifier(body.serverId, 'serverId');
-        const publicKey = String(body.publicKey || '');
-        const parsedKey = createPublicKey({ key: Buffer.from(publicKey, 'base64'), type: 'spki', format: 'der' });
-        if (parsedKey.asymmetricKeyType !== 'ed25519') throw new Error('agent key must be Ed25519');
-        const agent = await store.consumeEnrollment({
-          token: String(body.enrollmentToken || ''),
-          serverId,
-          publicKey,
-          allowedContainers: Array.isArray(body.allowedContainers) ? body.allowedContainers : [],
-        });
-        await audit.append({ actor: `agent:${serverId}`, event: 'agent.enrolled', target: serverId, outcome: 'success', requestId });
-        return sendJson(response, 201, { serverId: agent.id, allowedContainers: agent.allowedContainers });
-      }
-      if (request.method === 'POST' && url.pathname === '/api/agent/approval-request') {
-        if (!config.approvalEnrollmentEnabled) {
-          const error = new Error('approval-based enrollment is disabled');
-          error.statusCode = 403;
-          throw error;
-        }
-        const body = await readJson(request, 64 * 1024);
-        const serverId = assertIdentifier(body.serverId, 'serverId');
-        const displayName = String(body.displayName || serverId).trim().slice(0, 80) || serverId;
-        const publicKey = String(body.publicKey || '');
-        const parsedKey = createPublicKey({ key: Buffer.from(publicKey, 'base64'), type: 'spki', format: 'der' });
-        if (parsedKey.asymmetricKeyType !== 'ed25519') throw new Error('agent key must be Ed25519');
-        const allowedContainers = canonicalContainers(Array.isArray(body.allowedContainers) ? body.allowedContainers : []);
-        if (allowedContainers.length === 0) {
-          const error = new Error('agent allowlist must contain at least one container');
-          error.statusCode = 400;
-          throw error;
-        }
-        const configuredAllowlist = config.approvalEnrollmentAllowedContainers || [];
-        if (configuredAllowlist.length > 0 && allowedContainers.some((name) => !configuredAllowlist.includes(name))) {
-          const error = new Error('agent allowlist is not permitted for approval-based enrollment');
-          error.statusCode = 403;
-          throw error;
-        }
-        const authenticatedId = agentAuth.authenticateApprovalRequest(request, url.pathname, {
-          publicKey,
-          displayName,
-          allowedContainers,
-        });
-        if (authenticatedId !== serverId) throw new Error('agent id does not match signed request');
-        const result = await store.requestAgentApproval({
-          serverId,
-          displayName,
-          publicKey,
-          allowedContainers,
-        });
-        if (result.created) {
-          await audit.append({ actor: `agent:${serverId}`, event: 'agent.approval.requested', target: serverId, outcome: 'pending', requestId, detail: { allowedContainers } });
-        }
-        if (result.status === 'approved') {
-          return sendJson(response, 200, {
-            status: 'approved',
-            serverId: result.agent.id,
-            allowedContainers: result.agent.allowedContainers,
-          });
-        }
-        return sendJson(response, 202, { status: 'pending', serverId });
       }
       if (agentOnly) return sendJson(response, 404, { error: 'agent gateway route not found', requestId });
       if (request.method === 'POST' && url.pathname === '/api/auth/register/options') {
@@ -275,13 +231,73 @@ export async function createControlPlane(config) {
 
   const server = createServer((request, response) => handler(request, response));
   const agentServer = createServer((request, response) => handler(request, response, { agentOnly: true }));
+
+  const processEnrollmentUpgrade = async (request, path) => {
+    const requestId = request.headers['x-request-id'] || randomUUID();
+    const serverId = assertIdentifier(request.headers['x-agent-id'], 'x-agent-id');
+    const enrollment = agentEnrollment(request);
+    const displayName = String(enrollment.displayName || serverId).trim().slice(0, 80) || serverId;
+    const publicKey = enrollment.publicKey;
+    const parsedKey = createPublicKey({ key: Buffer.from(publicKey, 'base64'), type: 'spki', format: 'der' });
+    if (parsedKey.asymmetricKeyType !== 'ed25519') throw new Error('agent key must be Ed25519');
+    const allowedContainers = canonicalContainers(enrollment.allowedContainers);
+    if (allowedContainers.length === 0) throw new Error('agent allowlist must contain at least one container');
+    const authenticatedId = agentAuth.authenticateApprovalRequest(request, path, {
+      publicKey,
+      displayName,
+      allowedContainers,
+    });
+    if (authenticatedId !== serverId) throw new Error('agent id does not match signed request');
+
+    if (enrollment.enrollmentToken) {
+      const agent = await store.consumeEnrollment({
+        token: enrollment.enrollmentToken,
+        serverId,
+        publicKey,
+        allowedContainers,
+      });
+      await audit.append({ actor: `agent:${serverId}`, event: 'agent.enrolled', target: serverId, outcome: 'success', requestId });
+      return { type: 'enrollment', status: 'approved', serverId: agent.id, allowedContainers: agent.allowedContainers };
+    }
+
+    if (!config.approvalEnrollmentEnabled) throw new Error('approval-based enrollment is disabled');
+    const configuredAllowlist = config.approvalEnrollmentAllowedContainers || [];
+    if (configuredAllowlist.length > 0 && allowedContainers.some((name) => !configuredAllowlist.includes(name))) {
+      throw new Error('agent allowlist is not permitted for approval-based enrollment');
+    }
+    const result = await store.requestAgentApproval({ serverId, displayName, publicKey, allowedContainers });
+    if (result.created) {
+      await audit.append({ actor: `agent:${serverId}`, event: 'agent.approval.requested', target: serverId, outcome: 'pending', requestId, detail: { allowedContainers } });
+    }
+    if (result.status === 'approved') {
+      return {
+        type: 'enrollment',
+        status: 'approved',
+        serverId: result.agent.id,
+        allowedContainers: result.agent.allowedContainers,
+      };
+    }
+    return { type: 'enrollment', status: 'pending', serverId };
+  };
+
   const handleUpgrade = async (request, socket, head) => {
     try {
       if (!isAllowedPeer(request.socket.remoteAddress, config.privateNetworkMode)) throw new Error('private network required');
       const url = new URL(request.url, config.origin);
-      if (url.pathname !== '/agent/connect') throw new Error('unknown WebSocket endpoint');
-      const agent = await agentAuth.authenticate(request, url.pathname);
-      wss.handleUpgrade(request, socket, head, (websocket) => hub.register(agent, websocket));
+      if (url.pathname === '/agent/connect') {
+        const agent = await agentAuth.authenticate(request, url.pathname);
+        return wss.handleUpgrade(request, socket, head, (websocket) => hub.register(agent, websocket));
+      }
+      if (url.pathname === '/agent/enroll') {
+        const result = await processEnrollmentUpgrade(request, url.pathname);
+        return wss.handleUpgrade(request, socket, head, (websocket) => {
+          websocket.send(JSON.stringify(result), (error) => {
+            if (error) return websocket.terminate();
+            websocket.close(result.status === 'pending' ? 4003 : 1000, result.status);
+          });
+        });
+      }
+      throw new Error('unknown WebSocket endpoint');
     } catch {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       socket.destroy();

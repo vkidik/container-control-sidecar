@@ -38,8 +38,8 @@ export function parseControlPlaneUrl(value) {
   throw new Error('CONTROL_PLANE_URL must use https; http is allowed only for localhost or 127.0.0.0/8');
 }
 
-export function agentWebSocketUrl(controlPlaneUrl) {
-  const url = new URL('/agent/connect', controlPlaneUrl);
+export function agentWebSocketUrl(controlPlaneUrl, path = '/agent/connect') {
+  const url = new URL(path, controlPlaneUrl);
   url.protocol = controlPlaneUrl.protocol === 'http:' ? 'ws:' : 'wss:';
   return url;
 }

@@ -37,6 +37,8 @@ test('control plane serves UI on loopback but keeps API authenticated', async (t
   assert.equal(hiddenPanel.status, 404);
   const hiddenAuth = await fetch(`${gateway}/api/auth/session`);
   assert.equal(hiddenAuth.status, 404);
+  const removedAgentRest = await fetch(`${gateway}/api/agent/approval-request`, { method: 'POST' });
+  assert.equal(removedAgentRest.status, 404);
   const gatewayHealth = await fetch(`${gateway}/healthz`);
   assert.equal(gatewayHealth.status, 200);
 });

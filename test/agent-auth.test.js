@@ -34,7 +34,7 @@ test('approval request proof is bound to the generated key and exact allowlist',
   const agentId = 'project-new';
   const timestamp = 5_000;
   const nonce = randomBytes(32).toString('base64url');
-  const path = '/api/agent/approval-request';
+  const path = '/agent/enroll';
   const requestData = {
     publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
     displayName: 'Project new',

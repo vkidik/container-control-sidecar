@@ -4,6 +4,12 @@ Reusable Docker container control for projects deployed on unknown hosts. One
 owner panel can receive outbound agents from many projects through one
 permanent HTTPS/WebSocket tunnel.
 
+All agent-to-panel traffic uses outbound WebSocket connections, including the
+initial signed approval request, enrollment result, status snapshots, bounded
+logs, and container commands. The public agent gateway does not expose REST
+enrollment endpoints. The browser UI still talks to the local passkey-protected
+panel backend so authorization and audit checks cannot be bypassed.
+
 The repository publishes one image that contains both commands:
 
 - `node src/control-plane/main.js` starts the passkey-protected panel;
@@ -43,7 +49,7 @@ Name:  CONTROL_PLANE_URL
 Value: https://your-permanent-name.tuna.am
 ```
 
-Use the origin only. Do not append `/agent/connect`, query parameters or
+Use the origin only. Do not append an agent path, query parameters or
 credentials. On every `main` push, `.github/workflows/publish-images.yml`
 validates the variable and embeds it into the agent image as a Docker build
 argument. Each fork therefore publishes an agent connected to that fork
