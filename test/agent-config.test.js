@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { agentWebSocketUrl, loadAgentConfig, parseControlPlaneUrl } from '../src/agent/config.js';
+import { agentWebSocketUrl, containerIdFromMountInfo, loadAgentConfig, parseControlPlaneUrl } from '../src/agent/config.js';
 import { loadOrCreateIdentity } from '../src/agent/identity.js';
 
 test('remote control-plane addresses require TLS', () => {
@@ -20,13 +20,19 @@ test('same-host loopback supports HTTP and matching insecure WebSocket', () => {
   assert.equal(agentWebSocketUrl(parseControlPlaneUrl('https://control.tailnet.ts.net')).protocol, 'wss:');
 });
 
-test('agent uses the current container hostname after Docker recreates it', () => {
+test('agent uses the runtime container id after Watchtower preserves a stale hostname', () => {
+  const currentId = '1e695b6aff1f0000000000000000000000000000000000000000000000000000';
+  const mountInfo = `135 123 254:1 /docker/containers/${currentId}/hostname /etc/hostname ro - ext4 /dev/vda1 rw`;
   const config = loadAgentConfig({
     CONTROL_PLANE_URL: 'https://control.example',
-    HOSTNAME: 'deleted-container-id',
-  }, () => 'current-container-id');
+    HOSTNAME: '61951bea2700',
+  }, {
+    readMountInfo: () => mountInfo,
+    getHostname: () => '61951bea2700',
+  });
 
-  assert.equal(config.containerId, 'current-container-id');
+  assert.equal(containerIdFromMountInfo(mountInfo), currentId);
+  assert.equal(config.containerId, currentId);
 });
 
 test('agent endpoint, identity, and token may come from image environment or mounted files', async () => {

@@ -44,11 +44,26 @@ export function agentWebSocketUrl(controlPlaneUrl, path = '/agent/connect') {
   return url;
 }
 
-export function loadAgentConfig(env = process.env, getHostname = hostname) {
+export function containerIdFromMountInfo(value) {
+  const match = String(value || '').match(/\/containers\/([a-f0-9]{64})\/(?:hostname|hosts|resolv\.conf)(?:\s|$)/);
+  return match?.[1] || '';
+}
+
+function runtimeContainerId({ readMountInfo, getHostname }) {
+  try {
+    const containerId = containerIdFromMountInfo(readMountInfo());
+    if (containerId) return containerId;
+  } catch {}
+  return String(getHostname() || '').trim();
+}
+
+export function loadAgentConfig(env = process.env, runtime = {}) {
+  const readMountInfo = runtime.readMountInfo || (() => readFileSync('/proc/self/mountinfo', 'utf8'));
+  const getHostname = runtime.getHostname || hostname;
   const configuredServerId = envOrFile(env, 'AGENT_ID');
   const serverId = configuredServerId ? assertIdentifier(configuredServerId, 'AGENT_ID') : null;
   const controlPlaneUrl = parseControlPlaneUrl(envOrFile(env, 'CONTROL_PLANE_URL'));
-  const containerId = String(getHostname() || '').trim();
+  const containerId = runtimeContainerId({ readMountInfo, getHostname });
   if (!containerId) throw new Error('agent must run inside a Docker container');
   const dataDir = path.resolve(env.AGENT_DATA_DIR || './data/agent');
   return {
